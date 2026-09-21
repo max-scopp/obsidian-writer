@@ -1,0 +1,25 @@
+services:
+  writer:
+    build: .
+    image: obsidian-writer:local
+    container_name: obsidian-writer
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:4040:4040"
+    environment:
+      OBSIDIAN_VAULT_PATH: /vault
+      OBSIDIAN_WRITER_TOKEN: ${OBSIDIAN_WRITER_TOKEN:?set in .env}
+      OBSIDIAN_WRITER_READ_TOKEN: ${OBSIDIAN_WRITER_READ_TOKEN:-${OBSIDIAN_WRITER_TOKEN}}
+      OBSIDIAN_MAX_BODY_BYTES: "262144"
+      OBSIDIAN_RATE_PER_MIN: "30"
+      OBSIDIAN_RATE_PER_DAY: "200"
+      OBSIDIAN_LOG_LEVEL: INFO
+    volumes:
+      # The vault mount. Read-write here ONLY — the indexer and LiteLLM
+      # plugin should mount read-only.
+      - /mnt/obsidian:/vault:rw
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
