@@ -23,12 +23,23 @@ RESERVED_FRONTMATTER_FIELDS: frozenset[str] = frozenset(
     {"created", "source", "conversation", "path"}
 )
 
+# `source` is reserved with one exception. In a vault that follows the
+# Athenaeum contract it marks a note as unverified, and the agent protocol
+# requires agents to set it on inferred content and drop it once a fact is
+# confirmed. So it may take exactly these values, or null to remove it.
+UNVERIFIED_SOURCES: frozenset[str] = frozenset({"reconstruction", "inferred"})
+
 # Default key order in the rendered frontmatter (preserves human-readable
 # order — Obsidian doesn't care, but `git diff` does).
 DEFAULT_FIELD_ORDER: tuple[str, ...] = (
+    "type",
     "title",
+    "scope",
+    "agent",
+    "topics",
     "created",
     "modified",
+    "updated",
     "source",
     "conversation",
     "model",
@@ -131,11 +142,43 @@ def render_created(
     return render_note(metadata, body)
 
 
+def render_vault_created(
+    title: str,
+    fields: dict[str, Any],
+    *,
+    body: str = "",
+) -> str:
+    """Build a new note in the vault's own frontmatter contract.
+
+    The shape matches the vault's templates: `type`, `scope`, optional
+    `agent`, `topics` as a flow list, optional `status`, `updated` as a date
+    and `source` only when the content is unverified. The body gets the
+    note's `# Title` heading unless it already opens with one.
+    """
+    lines = ["---", f"type: {_scalar(fields['type'])}", f"scope: {_scalar(fields['scope'])}"]
+    if fields.get("agent"):
+        lines.append(f"agent: {_scalar(fields['agent'])}")
+    topics = ", ".join(_scalar(t) for t in fields.get("topics") or [])
+    lines.append(f"topics: [{topics}]")
+    if fields.get("status"):
+        lines.append(f"status: {_scalar(fields['status'])}")
+    lines.append(f"updated: {datetime.now(UTC):%Y-%m-%d}")
+    if fields.get("source"):
+        lines.append(f"source: {_scalar(fields['source'])}")
+    lines += ["---", ""]
+    text = body.lstrip("\n")
+    if not text.startswith("# "):
+        text = f"# {title}\n\n{text}" if text else f"# {title}\n"
+    output = "\n".join(lines) + "\n" + text
+    return output if output.endswith("\n") else output + "\n"
+
+
 def patch_frontmatter_yaml(existing_yaml: str, patch: dict[str, Any]) -> str:
     """Apply a typed patch to existing frontmatter.
 
-    Reserved fields (`created`, `source`, `conversation`, `path`) cannot be
-    removed or overwritten; attempting to do so raises `ValueError`.
+    Reserved fields (`created`, `conversation`, `path`) cannot be removed or
+    overwritten; attempting to do so raises `ValueError`. `source` may only
+    be set to one of `UNVERIFIED_SOURCES`, or to null to remove it.
 
     Unknown fields are added. Existing fields of compatible type are
     replaced; of incompatible type, raises `TypeError` so the agent
@@ -145,6 +188,17 @@ def patch_frontmatter_yaml(existing_yaml: str, patch: dict[str, Any]) -> str:
     metadata: dict[str, Any] = dict(post.metadata)
 
     for key, value in patch.items():
+        if key == "source" and (value is None or value in UNVERIFIED_SOURCES):
+            if value is None:
+                metadata.pop("source", None)
+            else:
+                metadata["source"] = value
+            continue
+        if key == "source":
+            raise ValueError(
+                "frontmatter field 'source' is reserved: it may only be set to "
+                "'reconstruction' or 'inferred', or to null once the note is confirmed"
+            )
         if key in RESERVED_FRONTMATTER_FIELDS:
             raise ValueError(f"frontmatter field {key!r} is reserved and cannot be patched")
 
@@ -158,7 +212,13 @@ def patch_frontmatter_yaml(existing_yaml: str, patch: dict[str, Any]) -> str:
 
         metadata[key] = value
 
-    metadata["modified"] = utc_now_iso()
+    # A vault note (it has a `type` or an `updated` date) records edits in
+    # `updated`; notes from before that contract keep their `modified` stamp.
+    vault_note = "type" in metadata or "updated" in metadata
+    if vault_note:
+        metadata["updated"] = datetime.now(UTC).strftime("%Y-%m-%d")
+    if "modified" in metadata or not vault_note:
+        metadata["modified"] = utc_now_iso()
     return render_note(metadata, post.content)
 
 

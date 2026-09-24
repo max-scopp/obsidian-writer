@@ -5,11 +5,16 @@ services:
     container_name: obsidian-writer
     restart: unless-stopped
     ports:
-      - "127.0.0.1:4040:4040"
+      - "4040:4040"
     environment:
       OBSIDIAN_VAULT_PATH: /vault
       OBSIDIAN_WRITER_TOKEN: ${OBSIDIAN_WRITER_TOKEN:?set in .env}
       OBSIDIAN_WRITER_READ_TOKEN: ${OBSIDIAN_WRITER_READ_TOKEN:-${OBSIDIAN_WRITER_TOKEN}}
+      # The LiteLLM plugin holds OBSIDIAN_WRITER_TOKEN; its writes are recorded as
+      # litellm/<caller>. Other clients (the LobeHub memory bridge) get their own.
+      OBSIDIAN_WRITER_TOKEN_NAME: litellm
+      OBSIDIAN_WRITER_CLIENTS: ${OBSIDIAN_WRITER_CLIENTS:-}
+      OBSIDIAN_HISTORY_DIR: /history
       OBSIDIAN_MAX_BODY_BYTES: "262144"
       OBSIDIAN_RATE_PER_MIN: "30"
       OBSIDIAN_RATE_PER_DAY: "200"
@@ -18,6 +23,8 @@ services:
       # The vault mount. Read-write here ONLY — the indexer and LiteLLM
       # plugin should mount read-only.
       - /mnt/obsidian:/vault:rw
+      # Vault history (git). Outside the vault so no .git syncs to devices.
+      - /var/lib/obsidian-writer/history:/history
     logging:
       driver: json-file
       options:

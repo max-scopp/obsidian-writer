@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from fastapi import Header, HTTPException, Request, status
+from fastapi import Depends, Header, HTTPException, Request, status
 
 log = logging.getLogger("obsidian_writer.deps")
 
@@ -24,7 +24,7 @@ def require_write_token(
     authorization: str | None = Header(default=None),
 ) -> str:
     token = _extract_token(authorization)
-    if token != request.app.state.write_token:
+    if token not in request.app.state.writers:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid token")
     return token
 
@@ -34,9 +34,27 @@ def require_read_token(
     authorization: str | None = Header(default=None),
 ) -> str:
     token = _extract_token(authorization)
-    if token not in (request.app.state.write_token, request.app.state.read_token):
+    if token not in request.app.state.writers and token != request.app.state.read_token:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid token")
     return token
+
+
+def actor(
+    request: Request,
+    token: str = Depends(require_write_token),
+    x_obsidian_actor: str | None = Header(default=None),
+) -> str:
+    """Who is writing, for the history: the client, plus whom it acts for.
+
+    Each write token belongs to a named client. A client that fronts several
+    callers - the LiteLLM plugin serves LobeHub, Home Assistant and n8n on
+    one token - names the caller in `X-Obsidian-Actor`, giving
+    `litellm/lobehub`. The header is attribution, not authentication: only
+    a holder of a write token can send it.
+    """
+    client: str = request.app.state.writers[token]
+    caller = (x_obsidian_actor or "").strip()
+    return f"{client}/{caller}" if caller else client
 
 
 def rate_limited(token: str, request: Request) -> None:

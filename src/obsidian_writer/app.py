@@ -21,6 +21,7 @@ from fastapi.responses import JSONResponse
 
 from . import __version__
 from .endpoints import router as endpoints_router
+from .history import History
 from .io import cleanup_stale_tmp
 from .ratelimit import Limits, RateLimiter
 
@@ -34,6 +35,21 @@ def _env(name: str, default: str | None = None, *, required: bool = False) -> st
     return value or ""
 
 
+def _parse_clients(raw: str) -> dict[str, str]:
+    """Parse `OBSIDIAN_WRITER_CLIENTS`: comma-separated `name=token` pairs.
+
+    Every client gets write access and its own rate-limit budget, and its
+    name is what the vault history records as the author of its writes.
+    """
+    clients: dict[str, str] = {}
+    for pair in filter(None, (p.strip() for p in raw.split(","))):
+        name, sep, token = pair.partition("=")
+        if not sep or not name.strip() or not token.strip():
+            raise RuntimeError("OBSIDIAN_WRITER_CLIENTS must be comma-separated name=token pairs")
+        clients[token.strip()] = name.strip()
+    return clients
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     vault_path = Path(_env("OBSIDIAN_VAULT_PATH", "/vault"))
@@ -42,6 +58,8 @@ async def lifespan(app: FastAPI):
 
     write_token = _env("OBSIDIAN_WRITER_TOKEN", required=True)
     read_token = _env("OBSIDIAN_WRITER_READ_TOKEN", write_token)
+    writers = {write_token: _env("OBSIDIAN_WRITER_TOKEN_NAME", "agent")}
+    writers.update(_parse_clients(_env("OBSIDIAN_WRITER_CLIENTS", "")))
 
     limits = Limits(
         per_minute=int(_env("OBSIDIAN_RATE_PER_MIN", "30")),
@@ -64,7 +82,14 @@ async def lifespan(app: FastAPI):
     app.state.vault_root = vault_path.resolve(strict=False)
     app.state.write_token = write_token
     app.state.read_token = read_token
+    app.state.writers = writers
     app.state.limiter = RateLimiter(limits)
+
+    history_dir = _env("OBSIDIAN_HISTORY_DIR", "")
+    app.state.history = None
+    if history_dir:
+        app.state.history = History(Path(history_dir), app.state.vault_root)
+        app.state.history.ensure()
 
     try:
         yield
