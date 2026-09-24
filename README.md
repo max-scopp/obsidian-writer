@@ -185,6 +185,11 @@ Tests use a tmp-path fixture and never touch a real vault.
 
 ## Related
 
-- [`obsidian-litellm-tools`](https://github.com/max-scopp/obsidian-litellm-tools) —
-  the LiteLLM proxy plugin that registers the agent-facing tool set and
-  dispatches tool calls to this service.
+This is the write side of a four-part chain:
+
+| Piece | Repo | Role |
+|---|---|---|
+| Vault API | this repo | The only thing that writes the vault |
+| Tool pack | [obsidian-litellm-tools](https://github.com/max-scopp/obsidian-litellm-tools) | Registers the agent-facing `obsidian_*` tools and dispatches them here |
+| Proxy hook | [litellm-toolbelt](https://github.com/max-scopp/litellm-toolbelt) | Executes those tools inside the LiteLLM proxy, streaming included |
+| Recall index | [obsidian-recall](https://github.com/max-scopp/obsidian-recall) | Search by meaning over the same vault, read-only |
